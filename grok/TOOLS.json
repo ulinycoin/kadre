@@ -1,0 +1,60 @@
+{
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "kadre_plan",
+        "description": "Построить план кадра: модель XL или Pony, промпт, можно ли i2i. Денег не тратит.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "request": { "type": "string", "description": "Запрос пользователя как есть" },
+            "ref": { "type": "string", "description": "Путь или URL референса, если есть" },
+            "model": {
+              "type": "string",
+              "enum": ["auto", "cyberrealistic-xl", "cyberrealistic-pony-v9"],
+              "description": "auto по умолчанию"
+            },
+            "aspect": { "type": "string", "enum": ["portrait", "square", "landscape"] }
+          },
+          "required": ["request"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "kadre_generate",
+        "description": "Сгенерировать один кадр через NanoGPT. ~$0.0051.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "request": { "type": "string" },
+            "ref": { "type": "string" },
+            "out": { "type": "string", "description": "Куда сохранить jpg" },
+            "model": {
+              "type": "string",
+              "enum": ["auto", "cyberrealistic-xl", "cyberrealistic-pony-v9"]
+            },
+            "aspect": { "type": "string", "enum": ["portrait", "square", "landscape"] },
+            "seed": { "type": "integer" }
+          },
+          "required": ["request"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "kadre_doctor",
+        "description": "Проверить, задан ли NANOGPT_API_KEY.",
+        "parameters": { "type": "object", "properties": {} }
+      }
+    }
+  ],
+  "shell": {
+    "kadre_plan": "python scripts/kadre.py plan \"{request}\" --ref \"{ref}\" --model {model} --aspect {aspect}",
+    "kadre_generate": "python scripts/kadre.py generate \"{request}\" --ref \"{ref}\" --out \"{out}\" --model {model} --aspect {aspect}",
+    "kadre_doctor": "python scripts/kadre.py doctor"
+  }
+}
