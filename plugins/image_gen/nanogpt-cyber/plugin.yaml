@@ -1,0 +1,7 @@
+name: nanogpt-cyber
+version: 1.0.0
+description: NanoGPT CyberRealistic XL / Pony v9 — маршрутизация и промпты по живым тестам
+author: kadre
+kind: backend
+requires_env:
+  - NANOGPT_API_KEY
