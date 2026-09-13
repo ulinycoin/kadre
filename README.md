@@ -30,12 +30,19 @@ Hermes по умолчанию может вызвать `image_generate` пач
 
 ## Hermes Agent
 
+Поставить или обновить с GitHub — скажи Hermes:
+
+```
+Поставь Kadre с GitHub: hermes plugins install ulinycoin/kadre --force --enable
+В ~/.hermes/config.yaml: image_gen.provider nanogpt-cyber, model auto, max_parallel_requests 1
+Перезапусти gateway.
+```
+
+Сам:
+
 ```bash
-mkdir -p ~/.hermes/plugins/image_gen
-cp -R plugins/image_gen/nanogpt-cyber ~/.hermes/plugins/image_gen/nanogpt-cyber
-mkdir -p ~/.hermes/skills
-cp -R skills/kadre ~/.hermes/skills/kadre
-hermes plugins enable nanogpt-cyber
+hermes plugins install ulinycoin/kadre --force --enable
+hermes plugins update nanogpt-cyber
 ```
 
 В `~/.hermes/config.yaml`:

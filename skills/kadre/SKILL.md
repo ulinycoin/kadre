@@ -38,6 +38,16 @@ required_environment_variables:
 
 Если в ответе `cached: true` — это тот же кадр, деньги не ушли. Скажи это и не вызывай инструмент снова.
 
+## Обновление с GitHub
+
+Только если человек явно просит обновить плагин:
+
+```bash
+hermes plugins install ulinycoin/kadre --force --enable
+```
+
+Потом проверь `image_gen.provider: nanogpt-cyber` и `max_parallel_requests: 1`. Не генерируй кадры в этом ходе.
+
 ## Маршрут (уже внутри провайдера)
 
 | Запрос | Модель |
