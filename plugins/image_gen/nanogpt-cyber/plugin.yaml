@@ -1,6 +1,6 @@
 name: nanogpt-cyber
-version: 1.0.0
-description: NanoGPT CyberRealistic XL / Pony v9 — маршрутизация и промпты по живым тестам
+version: 1.1.0
+description: NanoGPT CyberRealistic XL / Pony v9 — один кадр на запрос, без ретраев агента
 author: kadre
 kind: backend
 requires_env:

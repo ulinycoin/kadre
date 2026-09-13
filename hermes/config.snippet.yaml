@@ -1,0 +1,11 @@
+# Вставь в ~/.hermes/config.yaml
+# По умолчанию Hermes батчит до 4 image_generate — это жрёт NanoGPT впустую.
+
+plugins:
+  enabled:
+    - nanogpt-cyber
+
+image_gen:
+  provider: nanogpt-cyber
+  model: auto
+  max_parallel_requests: 1
