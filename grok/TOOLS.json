@@ -25,7 +25,7 @@
       "type": "function",
       "function": {
         "name": "kadre_generate",
-        "description": "Сгенерировать один кадр через NanoGPT. ~$0.0051.",
+        "description": "Один кадр через NanoGPT (~$0.0051). Не вызывай пачкой и не повторяй после успеха. Повтор — только по явной просьбе человека, тогда передай force.",
         "parameters": {
           "type": "object",
           "properties": {
@@ -37,7 +37,8 @@
               "enum": ["auto", "cyberrealistic-xl", "cyberrealistic-pony-v9"]
             },
             "aspect": { "type": "string", "enum": ["portrait", "square", "landscape"] },
-            "seed": { "type": "integer" }
+            "seed": { "type": "integer" },
+            "force": { "type": "boolean", "description": "true только если человек явно просит другой дубль" }
           },
           "required": ["request"]
         }
