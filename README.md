@@ -1,8 +1,18 @@
 # Kadre
 
-Система генерации кадров для **агента**: [Hermes Agent](https://hermes-agent.nousresearch.com/) или **Grok Bot**.
+Система генерации кадров для **агента**: [Hermes Agent](https://hermes-agent.nousresearch.com/) или **Grok Bot**. Не сайт и не Aphelia.
 
 Поверх NanoGPT: **CyberRealistic XL** и **CyberRealistic Pony v9.0**. Маршрут, промпты и i2i — из живых тестов, не из догадок.
+
+## Один кадр на запрос
+
+Hermes по умолчанию может вызвать `image_generate` пачкой (до 4) и после кадра сам устроить vision-QA / «ещё вариант». Kadre это режет:
+
+- в системный промпт вшито правило «первый success — финал»;
+- параллельные и повторные вызовы с тем же смыслом отдают **тот же файл**, NanoGPT не дергают;
+- новый дубль — только явная фраза человека «ещё» / «перегенерируй» (или `kadre.py generate --force`).
+
+В `~/.hermes/config.yaml` поставь `max_parallel_requests: 1` — см. [`hermes/config.snippet.yaml`](hermes/config.snippet.yaml).
 
 ## Что умеет агент
 
@@ -23,6 +33,8 @@
 ```bash
 mkdir -p ~/.hermes/plugins/image_gen
 cp -R plugins/image_gen/nanogpt-cyber ~/.hermes/plugins/image_gen/nanogpt-cyber
+mkdir -p ~/.hermes/skills
+cp -R skills/kadre ~/.hermes/skills/kadre
 hermes plugins enable nanogpt-cyber
 ```
 
@@ -32,11 +44,12 @@ hermes plugins enable nanogpt-cyber
 image_gen:
   provider: nanogpt-cyber
   model: auto
+  max_parallel_requests: 1
 ```
 
 Ключ: `NANOGPT_API_KEY` (или `hermes tools` → NanoGPT CyberRealistic).
 
-Дальше обычный `image_generate`. Провайдер сам выбирает XL/Pony, переписывает промпт и решает, брать ли референс.
+Дальше обычный `image_generate`. Провайдер сам выбирает XL/Pony, переписывает промпт и решает, брать ли референс. После успеха не зови инструмент снова.
 
 ## Grok Bot
 
@@ -46,8 +59,8 @@ image_gen:
 
 ```bash
 export NANOGPT_API_KEY=sk-nano-...
-python scripts/kadre.py plan "клеопатра, наездница, лицом в камеру"
 python scripts/kadre.py generate "харли квинн, склад, бита" --out .kadre-out/harley.jpg
+python scripts/kadre.py generate --force "ещё" --out .kadre-out/harley-2.jpg
 ```
 
 Правила агента: [`skills/kadre/SKILL.md`](skills/kadre/SKILL.md)
@@ -55,7 +68,7 @@ python scripts/kadre.py generate "харли квинн, склад, бита" -
 ## Проверка без ключа
 
 ```bash
-python -m unittest tests/test_router.py
+python -m unittest tests/test_router.py tests/test_once.py
 python scripts/kadre.py plan "кукла барби стиль"
 python scripts/kadre.py doctor
 ```
