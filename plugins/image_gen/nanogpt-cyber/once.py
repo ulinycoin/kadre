@@ -13,11 +13,18 @@ import os
 import re
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+try:
+    import fcntl
+except ImportError:  # Windows — межпроцессный замок недоступен
+    fcntl = None  # type: ignore[assignment]
+
 _lock = threading.Lock()
+_index_mutex = threading.Lock()
 
 CACHE_TTL_SEC = 15 * 60
 SIMILARITY = 0.55
@@ -76,8 +83,7 @@ def _index_path() -> Path:
     return cache_dir() / "shots.json"
 
 
-def load_index() -> dict[str, Any]:
-    path = _index_path()
+def _read_index(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {"shots": [], "last": None}
     try:
@@ -91,9 +97,58 @@ def load_index() -> dict[str, Any]:
     return data
 
 
-def save_index(data: dict[str, Any]) -> None:
+def load_index() -> dict[str, Any]:
+    return _read_index(_index_path())
+
+
+def _write_atomic(path: Path, payload: str) -> None:
+    """Временный файл + os.replace: обрыв записи не портит рабочий индекс."""
+    tmp = path.with_name(f"{path.name}.tmp{os.getpid()}")
+    try:
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+@contextmanager
+def _index_guard(path: Path):
+    """Потоковый и межпроцессный замок: CLI и gateway пишут один и тот же индекс."""
+    handle = None
+    with _index_mutex:
+        try:
+            if fcntl is not None:
+                handle = open(path.with_name(path.name + ".lock"), "a+")
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        except OSError:
+            handle = None
+        try:
+            yield
+        finally:
+            if handle is not None:
+                if fcntl is not None:
+                    try:
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    except OSError:
+                        pass
+                handle.close()
+
+
+def _update_index(mutate) -> dict[str, Any]:
     path = _index_path()
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    with _index_guard(path):
+        data = mutate(_read_index(path))
+        _write_atomic(path, json.dumps(data, ensure_ascii=False, indent=2))
+        return data
+
+
+def save_index(data: dict[str, Any]) -> None:
+    """Полная перезапись индекса (атомарно, под замком)."""
+    _update_index(lambda _current: data)
 
 
 def normalize_core(text: str) -> str:
@@ -151,17 +206,25 @@ def _shot_from(raw: Any) -> Shot | None:
 
 
 def remember(shot: Shot) -> None:
-    data = load_index()
     now = time.time()
-    shots = []
-    for raw in data.get("shots") or []:
-        old = _shot_from(raw)
-        if old and now - old.ts <= CACHE_TTL_SEC:
-            shots.append(asdict(old))
-    shots.append(asdict(shot))
-    data["shots"] = shots[-40:]
-    data["last"] = asdict(shot)
-    save_index(data)
+
+    def mutate(data: dict[str, Any]) -> dict[str, Any]:
+        shots = []
+        for raw in data.get("shots") or []:
+            old = _shot_from(raw)
+            if old and now - old.ts <= CACHE_TTL_SEC:
+                shots.append(asdict(old))
+        shots.append(asdict(shot))
+        data["shots"] = shots[-40:]
+        data["last"] = asdict(shot)
+        return data
+
+    _update_index(mutate)
+
+
+def _looks_like_retry(text: str) -> bool:
+    """Парафраз ретрая от агента («better anatomy, try again»), а не новый заказ."""
+    return bool(RETRY_FLUFF_RE.search(text or ""))
 
 
 def lookup(
@@ -186,6 +249,11 @@ def lookup(
             continue
         if shot.fingerprint == key:
             return shot
+
+    # Нечёткое совпадение — только для ретрая: иначе новый похожий заказ молча
+    # получит старый файл с cost=0 и не будет сгенерирован вовсе.
+    if not _looks_like_retry(request):
+        return None
 
     last = _shot_from(data.get("last"))
     if last and now - last.ts <= CACHE_TTL_SEC:

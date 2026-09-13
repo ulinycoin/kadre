@@ -20,6 +20,7 @@ try:
         resolve_request,
     )
     from .plan import make_plan
+    from .policy import underage_violation
 except ImportError:
     from nanogpt import generate as nanogpt_generate
     from once import (
@@ -33,6 +34,7 @@ except ImportError:
         resolve_request,
     )
     from plan import make_plan
+    from policy import underage_violation
 
 try:
     from agent.image_gen_provider import (
@@ -182,6 +184,15 @@ class NanoGptCyberProvider(ImageGenProvider):
         low = raw.lower()
         if aspect == "landscape" and not any(w in low for w in ("landscape", "горизонт", "wide", "16:9")):
             aspect = "portrait"
+
+        if underage_violation(raw):
+            return error_response(
+                error="запрос отклонён политикой: упоминание несовершеннолетних",
+                error_type="policy_violation",
+                provider=self.name,
+                prompt=raw,
+                aspect_ratio=aspect,
+            )
 
         text = resolve_request(raw)
         if not text:

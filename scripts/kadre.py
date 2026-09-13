@@ -15,9 +15,27 @@ sys.path.insert(0, str(PLUGIN))
 from nanogpt import api_key, generate  # noqa: E402
 from once import AGENT_INSTRUCTION, Shot, lookup, remember, resolve_request, fingerprint, normalize_core  # noqa: E402
 from plan import make_plan  # noqa: E402
+from policy import underage_violation  # noqa: E402
+
+
+def _policy_refusal() -> int:
+    print(
+        json.dumps(
+            {
+                "ok": False,
+                "error": "запрос отклонён политикой: упоминание несовершеннолетних",
+                "error_type": "policy_violation",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 2
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
+    if underage_violation(args.request):
+        return _policy_refusal()
     plan = make_plan(
         args.request,
         has_reference=bool(args.ref),
@@ -29,6 +47,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
+    if underage_violation(args.request):
+        return _policy_refusal()
     request = resolve_request(args.request)
     cached = None if args.force else lookup(
         args.request,

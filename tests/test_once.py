@@ -4,9 +4,11 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "plugins" / "image_gen" / "nanogpt-cyber"))
 
@@ -42,6 +44,7 @@ class OnceCacheTests(unittest.TestCase):
         os.environ["KADRE_CACHE"] = self.tmp.name
         self.jpg = Path(self.tmp.name) / "frame.jpg"
         self.jpg.write_bytes(b"jpeg")
+        self._counter = 0
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -98,6 +101,94 @@ class OnceCacheTests(unittest.TestCase):
         self.assertEqual(out["cost"], 0)
         self.assertEqual(out["image"], str(self.jpg))
         self.assertIn("не дергали", " ".join(out["notes"]))
+
+
+class NewOrderIsNotCacheHitTests(unittest.TestCase):
+    """Похожий, но НОВЫЙ заказ не должен молча получить старый кадр."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        os.environ["KADRE_CACHE"] = self.tmp.name
+        self.jpg = Path(self.tmp.name) / "frame.jpg"
+        self.jpg.write_bytes(b"jpeg")
+        core = normalize_core("харли квинн склад бита")
+        remember(
+            Shot(
+                path=str(self.jpg),
+                core=core,
+                fingerprint=once.fingerprint(core, None, "portrait", "auto"),
+                request="харли квинн склад бита",
+                model="cyberrealistic-xl",
+                ts=time.time(),
+                reason="тест",
+                notes=[],
+            )
+        )
+
+    def tearDown(self):
+        self.tmp.cleanup()
+        os.environ.pop("KADRE_CACHE", None)
+
+    def test_similar_but_new_order_misses_cache(self):
+        self.assertIsNone(lookup("харли квинн склад бита чокер"))
+
+    def test_agent_retry_paraphrase_still_hits(self):
+        self.assertIsNotNone(lookup("харли квинн склад бита, better anatomy, try again"))
+
+
+class IndexDurabilityTests(unittest.TestCase):
+    """Индекс кэша: одна порча файла = потерянный кадр и повторная оплата."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        os.environ["KADRE_CACHE"] = self.tmp.name
+
+    def tearDown(self):
+        self.tmp.cleanup()
+        os.environ.pop("KADRE_CACHE", None)
+
+    def _shot(self, name: str) -> Shot:
+        f = Path(self.tmp.name) / f"{name}.jpg"
+        f.write_bytes(b"jpeg")
+        core = normalize_core(name)
+        return Shot(
+            path=str(f),
+            core=core,
+            fingerprint=once.fingerprint(core, None, "portrait", "auto"),
+            request=name,
+            model="cyberrealistic-xl",
+            ts=time.time(),
+            reason="тест",
+            notes=[],
+        )
+
+    def test_partial_write_does_not_destroy_index(self):
+        remember(self._shot("первый кадр"))
+        good = len(once.load_index()["shots"])
+
+        real_write_text = Path.write_text
+
+        def flaky(self, data, *args, **kwargs):
+            real_write_text(self, data[: max(1, len(data) // 2)], *args, **kwargs)
+            raise OSError("disk full")
+
+        with mock.patch.object(Path, "write_text", flaky):
+            with self.assertRaises(OSError):
+                remember(self._shot("второй кадр"))
+
+        self.assertEqual(len(once.load_index()["shots"]), good)
+
+    def test_concurrent_remember_keeps_every_shot(self):
+        threads = [
+            threading.Thread(target=remember, args=(self._shot(f"кадр {i}"),))
+            for i in range(20)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(len(once.load_index()["shots"]), 20)
 
 
 if __name__ == "__main__":

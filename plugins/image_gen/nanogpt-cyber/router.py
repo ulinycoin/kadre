@@ -1,7 +1,15 @@
-"""Маршрутизация CyberRealistic XL / Pony v9 по итогам живых тестов NanoGPT."""
+"""Маршрутизация CyberRealistic XL / Pony v9 по итогам живых тестов NanoGPT.
+
+Матчинг терминов — по границам слова, а не подстрокой: `anal` не должен ловиться
+в `analysis`, `cum` — в `document`, `bj` — в `subject` (это давало платный NSFW-кадр
+вместо портрета). Латинские термины матчатся как слова целиком, кириллические —
+как начало слова с любыми окончаниями (`наездн` → «наездница»), а известные
+ложные срабатывания глушатся точечным исключением.
+"""
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -39,6 +47,41 @@ I2I_FIX_TERMS = (
     "fix", "same pose", "та же поза", "тот же кадр",
 )
 
+# Термин → подстрока сразу после него, которая означает ДРУГОЕ слово.
+# Нужно только для кириллических основ со свободным окончанием.
+TERM_EXCLUDES = {
+    "анал": "и",          # анализ, аналитика — не половой акт
+    "конч": "ик",         # кончик — не эякуляция («кончил» не задевает)
+    "член": r"(?:ов|ам|ах|ом|ство|ств)",  # член клуба — не орган
+    "моч": "ь",           # мочь — не моча
+    "поза": "д",          # позади — не поза
+}
+
+_CYRILLIC_RE = re.compile(r"[а-яё]", re.IGNORECASE)
+
+
+def _term_pattern(term: str) -> str:
+    """Шаблон для одного термина: слово целиком (латиница) или основа (кириллица)."""
+    body = re.escape(term)
+    exclude = TERM_EXCLUDES.get(term)
+    if exclude:
+        body += f"(?!{exclude})"
+    if _CYRILLIC_RE.search(term):
+        return rf"(?<![а-яёa-z0-9]){body}[а-яё]*"
+    return rf"(?<![a-z0-9]){body}(?![a-z0-9])"
+
+
+def compile_terms(terms: tuple[str, ...]) -> re.Pattern[str]:
+    return re.compile("|".join(_term_pattern(t) for t in terms), re.IGNORECASE)
+
+
+ACT_RE = compile_terms(ACT_TERMS)
+LOOK_RE = compile_terms(LOOK_TERMS)
+BARBIE_RE = compile_terms(BARBIE_TERMS)
+AGE50_RE = compile_terms(AGE50_TERMS)
+POSE_CHANGE_RE = compile_terms(POSE_CHANGE_TERMS)
+I2I_FIX_RE = compile_terms(I2I_FIX_TERMS)
+
 
 @dataclass
 class Route:
@@ -50,8 +93,13 @@ class Route:
     warnings: list[str] = field(default_factory=list)
 
 
-def _has(text: str, terms: tuple[str, ...]) -> bool:
-    return any(term in text for term in terms)
+def matches(text: str, term: str) -> bool:
+    """Тот же матчинг (границы слова + исключения), но для одного термина."""
+    return bool(re.search(_term_pattern(term), (text or "").lower(), re.IGNORECASE))
+
+
+def _has(text: str, pattern: re.Pattern[str]) -> bool:
+    return bool(pattern.search(text))
 
 
 def route(
@@ -63,12 +111,12 @@ def route(
     text = (request or "").strip().lower()
     warnings: list[str] = []
 
-    is_act = _has(text, ACT_TERMS)
-    is_look = _has(text, LOOK_TERMS)
-    is_barbie = _has(text, BARBIE_TERMS)
-    is_age50 = _has(text, AGE50_TERMS)
-    is_pose_change = _has(text, POSE_CHANGE_TERMS)
-    is_fix = _has(text, I2I_FIX_TERMS)
+    is_act = _has(text, ACT_RE)
+    is_look = _has(text, LOOK_RE)
+    is_barbie = _has(text, BARBIE_RE)
+    is_age50 = _has(text, AGE50_RE)
+    is_pose_change = _has(text, POSE_CHANGE_RE)
+    is_fix = _has(text, I2I_FIX_RE)
 
     if model_override in ("cyberrealistic-xl", "cyberrealistic-pony-v9"):
         intent: Intent = "act" if is_act else "look"
