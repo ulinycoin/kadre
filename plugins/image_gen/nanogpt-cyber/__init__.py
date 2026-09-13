@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from pathlib import Path
@@ -19,7 +20,7 @@ try:
         remember,
         resolve_request,
     )
-    from .plan import make_plan
+    from .plan import COST_ESTIMATE_USD, make_plan
     from .policy import underage_violation
 except ImportError:
     from nanogpt import generate as nanogpt_generate
@@ -33,7 +34,7 @@ except ImportError:
         remember,
         resolve_request,
     )
-    from plan import make_plan
+    from plan import COST_ESTIMATE_USD, make_plan
     from policy import underage_violation
 
 try:
@@ -83,6 +84,9 @@ except ImportError:  # CLI / тесты без Hermes
         return path
 
 
+LOGGER_NAME = "hermes.plugin.kadre"
+logger = logging.getLogger(LOGGER_NAME)
+
 KADRE_SYSTEM = """Kadre / image_generate — одноразовый кадр.
 - Один вызов image_generate на один запрос человека.
 - Не делай варианты, не вызывай инструмент пачкой, не гоняй vision-QA.
@@ -105,27 +109,28 @@ class NanoGptCyberProvider(ImageGenProvider):
         return bool(os.environ.get("NANOGPT_API_KEY") or os.environ.get("NANO_GPT_API_KEY"))
 
     def list_models(self) -> List[Dict[str, Any]]:
+        price = f"${COST_ESTIMATE_USD:.4f}"
         return [
             {
                 "id": "auto",
                 "display": "Auto (XL / Pony по запросу)",
                 "speed": "~8s",
                 "strengths": "маршрутизация по тестам",
-                "price": "$0.0051",
+                "price": price,
             },
             {
                 "id": "cyberrealistic-xl",
                 "display": "CyberRealistic XL",
                 "speed": "~8s",
                 "strengths": "лицо, возраст 50+, аксессуары, портрет",
-                "price": "$0.0051",
+                "price": price,
             },
             {
                 "id": "cyberrealistic-pony-v9",
                 "display": "CyberRealistic Pony v9.0",
                 "speed": "~8s",
                 "strengths": "акт, cum, поза, живая кожа",
-                "price": "$0.0051",
+                "price": price,
             },
         ]
 
@@ -301,6 +306,7 @@ class NanoGptCyberProvider(ImageGenProvider):
             "reason": plan_reason,
             "notes": notes,
             "cost": 0 if cached else cost,
+            "cost_estimate_usd": COST_ESTIMATE_USD,
             "balance": balance,
             "used_i2i": used_i2i,
             "strength": strength,
@@ -327,13 +333,14 @@ def register(ctx) -> None:
             position="after_memory",
             max_chars=900,
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        # Молчание тут = агент снова начнёт батчить кадры и платить дважды.
+        logger.warning("kadre: секция промпта не зарегистрирована: %s", exc)
     skill = Path(__file__).resolve().parent / "skill"
     if not skill.is_dir():
         skill = Path(__file__).resolve().parents[3] / "skills" / "kadre"
     if skill.is_dir():
         try:
             ctx.register_skill("kadre", str(skill))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("kadre: скилл не зарегистрирован (%s): %s", skill, exc)

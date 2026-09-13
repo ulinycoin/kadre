@@ -1,4 +1,4 @@
-"""План кадра для агента: модель, промпт, i2i, предупреждения."""
+"""План кадра для агента: модель, промпт, i2i, возраст, предупреждения."""
 
 from __future__ import annotations
 
@@ -6,11 +6,29 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 try:
-    from .prompts import aspect_to_resolution, build_prompts, model_display
+    from .prompts import (
+        DEFAULT_AGE,
+        aspect_to_resolution,
+        build_prompts,
+        model_display,
+        normalize_age,
+        requested_age,
+    )
     from .router import Route, route
 except ImportError:
-    from prompts import aspect_to_resolution, build_prompts, model_display
+    from prompts import (
+        DEFAULT_AGE,
+        aspect_to_resolution,
+        build_prompts,
+        model_display,
+        normalize_age,
+        requested_age,
+    )
     from router import Route, route
+
+# Замер 2026-09-13 по дельтам баланса: 29 кадров = $0.0646 → ≈ $0.0022 за кадр.
+# Прежние $0.0051 — смета планировщика, а не списание; агенту её показывать нельзя.
+COST_ESTIMATE_USD = 0.0022
 
 
 @dataclass
@@ -26,7 +44,8 @@ class Plan:
     warnings: list[str]
     guidance_scale: float
     steps: int
-    cost_usd: float = 0.0051
+    cost_usd: float = COST_ESTIMATE_USD
+    age: int = DEFAULT_AGE
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -38,14 +57,16 @@ def make_plan(
     has_reference: bool = False,
     model_override: str | None = None,
     aspect_ratio: str = "portrait",
+    age: int | None = None,
 ) -> Plan:
     decided: Route = route(
         request,
         has_reference=has_reference,
         model_override=model_override,
     )
-    prompt, negative = build_prompts(request, decided)
+    prompt, negative = build_prompts(request, decided, age=age)
     cfg = 6.0 if decided.model.endswith("pony-v9") else 5.5
+    resolved_age = normalize_age(age if age is not None else requested_age(request))
     return Plan(
         model=decided.model,
         model_name=model_display(decided.model),
@@ -58,4 +79,5 @@ def make_plan(
         warnings=list(decided.warnings),
         guidance_scale=cfg,
         steps=30,
+        age=resolved_age,
     )

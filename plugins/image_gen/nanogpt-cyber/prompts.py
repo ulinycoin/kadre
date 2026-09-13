@@ -10,11 +10,12 @@ except ImportError:
     from router import ModelId, Route, matches
 
 ADULT_XL = (
-    "photorealistic 25 year old adult woman, 25yo, adult face, mature adult features, "
+    "photorealistic {age} year old adult woman, {age}yo, adult face, mature adult features, "
 )
-ADULT_PONY = "1girl, 25 year old adult woman, adult, 25yo, "
+ADULT_PONY = "1girl, {age} year old adult woman, adult, {age}yo, "
 ADULT_NEG = (
     "child, teen, underage, loli, school, baby face, barely legal, young girl, "
+    "under 21, teenage body, "
 )
 ANATOMY_NEG = (
     "extra people, extra legs, extra feet, extra fingers, extra arms, fused bodies, "
@@ -23,7 +24,7 @@ JUNK_NEG = "watermark, text, logo, signature, username, blurry"
 
 MIN_AGE = 21
 DEFAULT_AGE = 25
-AGE50_FALLBACK = "mature adult woman, 50+"
+AGE50_TEXT = "mature adult woman, 50+"
 
 # Возраст — только число рядом с возрастным словом и без склейки с другой цифрой,
 # иначе «55mm» и «1024x1408» читались бы как возраст.
@@ -55,45 +56,56 @@ def requested_age(text: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def normalize_age(age: int | None) -> int:
-    """Жёсткий пол 21+; без числа — дефолт 25 (совпадает с CLI --age)."""
-    if age is None:
+def normalize_age(age: int | str | None) -> int:
+    """Возраст персоны: дефолт 25, жёсткий пол 21+. Ниже 21 не опускаем никогда."""
+    if age in (None, "", 0):
         return DEFAULT_AGE
-    return max(MIN_AGE, int(age))
+    try:
+        value = int(age)
+    except (TypeError, ValueError):
+        return DEFAULT_AGE
+    return value if value >= MIN_AGE else MIN_AGE
 
 
-def build_prompts(request: str, route: Route) -> tuple[str, str]:
+def build_prompts(request: str, route: Route, age: int | None = None) -> tuple[str, str]:
     raw = (request or "").strip()
     low = raw.lower()
+    explicit = age if age is not None else requested_age(raw)
+    years = normalize_age(explicit) if explicit is not None else None
     front = "".join(tag for key, tag in ACT_FRONT.items() if matches(low, key))
 
     if route.model == "cyberrealistic-pony-v9":
-        prompt = _pony(raw, front, route)
+        prompt = _pony(raw, front, route, years)
     else:
-        prompt = _xl(raw, front, route)
+        prompt = _xl(raw, front, route, years)
     return prompt, _negative(low)
 
 
-def _xl(raw: str, front: str, route: Route) -> str:
+def _xl(raw: str, front: str, route: Route, years: int | None) -> str:
     if route.intent == "age":
-        age = requested_age(raw)
-        if age is None:
-            head = f"photorealistic {AGE50_FALLBACK}, "
-            tail = AGE50_FALLBACK
-        else:
-            years = normalize_age(age)
-            head = f"photorealistic {years} year old mature adult woman, {years}yo, "
-            tail = f"{years} years old adult"
-        return f"{front}{head}{raw}, looking at camera, 85mm, cinematic light, {tail}"
+        if years is None:
+            return (
+                f"{front}photorealistic {AGE50_TEXT}, {raw}, "
+                f"looking at camera, 85mm, cinematic light, {AGE50_TEXT}"
+            )
+        return (
+            f"{front}photorealistic {years} year old mature adult woman, {years}yo, {raw}, "
+            f"looking at camera, 85mm, cinematic light, {years} years old adult"
+        )
+    guard = years if years is not None else DEFAULT_AGE
     return (
-        f"{front}{ADULT_XL}{raw}, looking at camera, 85mm, cinematic light, "
-        "professional photography, 25 years old adult"
+        f"{front}{ADULT_XL.format(age=guard)}{raw}, looking at camera, 85mm, cinematic light, "
+        f"professional photography, {guard} years old adult"
     )
 
 
-def _pony(raw: str, front: str, route: Route) -> str:
+def _pony(raw: str, front: str, route: Route, years: int | None) -> str:
+    guard = years if years is not None else DEFAULT_AGE
     scores = "score_9, score_8_up, score_7_up, source_photo, realistic, "
-    return f"{scores}{front}{ADULT_PONY}{raw}, looking at viewer, professional photography"
+    return (
+        f"{scores}{front}{ADULT_PONY.format(age=guard)}{raw}, looking at viewer, "
+        f"professional photography, {guard} years old adult"
+    )
 
 
 def _negative(low: str) -> str:

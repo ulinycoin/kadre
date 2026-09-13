@@ -16,6 +16,7 @@ from nanogpt import api_key, generate  # noqa: E402
 from once import AGENT_INSTRUCTION, Shot, lookup, remember, resolve_request, fingerprint, normalize_core  # noqa: E402
 from plan import make_plan  # noqa: E402
 from policy import underage_violation  # noqa: E402
+from prompts import MIN_AGE  # noqa: E402
 
 
 def _policy_refusal() -> int:
@@ -41,6 +42,7 @@ def cmd_plan(args: argparse.Namespace) -> int:
         has_reference=bool(args.ref),
         model_override=None if args.model == "auto" else args.model,
         aspect_ratio=args.aspect,
+        age=args.age,
     )
     print(json.dumps(plan.as_dict(), ensure_ascii=False, indent=2))
     return 0
@@ -82,6 +84,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         has_reference=bool(args.ref),
         model_override=None if args.model == "auto" else args.model,
         aspect_ratio=args.aspect,
+        age=args.age,
     )
     result = generate(
         model=plan.model,
@@ -149,6 +152,7 @@ def main() -> int:
     common.add_argument("--ref", help="путь или URL референса")
     common.add_argument("--model", default="auto", choices=["auto", "cyberrealistic-xl", "cyberrealistic-pony-v9"])
     common.add_argument("--aspect", default="portrait", choices=["portrait", "square", "landscape"])
+    common.add_argument("--age", type=int, default=None, help=f"возраст персоны, жёсткий пол {MIN_AGE}+")
 
     sp = sub.add_parser("plan", parents=[common], help="только маршрут и промпт")
     sp.set_defaults(func=cmd_plan)
