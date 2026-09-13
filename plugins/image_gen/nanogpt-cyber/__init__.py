@@ -336,11 +336,13 @@ def register(ctx) -> None:
     except Exception as exc:
         # Молчание тут = агент снова начнёт батчить кадры и платить дважды.
         logger.warning("kadre: секция промпта не зарегистрирована: %s", exc)
-    skill = Path(__file__).resolve().parent / "skill"
-    if not skill.is_dir():
-        skill = Path(__file__).resolve().parents[3] / "skills" / "kadre"
-    if skill.is_dir():
+    skill_dir = Path(__file__).resolve().parent / "skill"
+    if not skill_dir.is_dir():
+        skill_dir = Path(__file__).resolve().parents[3] / "skills" / "kadre"
+    skill_file = skill_dir / "SKILL.md"
+    if skill_file.is_file():
         try:
-            ctx.register_skill("kadre", str(skill))
+            # Hermes ждёт Path до самого SKILL.md (проверяет .exists()).
+            ctx.register_skill("kadre", skill_file)
         except Exception as exc:
-            logger.warning("kadre: скилл не зарегистрирован (%s): %s", skill, exc)
+            logger.warning("kadre: скилл не зарегистрирован (%s): %s", skill_file, exc)

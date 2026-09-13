@@ -28,6 +28,8 @@ class _Ctx:
         self.fail_section = fail_section
         self.fail_skill = fail_skill
         self.provider = None
+        self.skill_name = None
+        self.skill_path = None
 
     def register_image_gen_provider(self, provider):
         self.provider = provider
@@ -36,7 +38,9 @@ class _Ctx:
         if self.fail_section:
             raise RuntimeError("boom-section")
 
-    def register_skill(self, *args, **kwargs):
+    def register_skill(self, name, path, *args, **kwargs):
+        self.skill_name = name
+        self.skill_path = path
         if self.fail_skill:
             raise RuntimeError("boom-skill")
 
@@ -61,6 +65,15 @@ class RegistrationTests(unittest.TestCase):
         with self.assertNoLogs(LOGGER, level="WARNING"):
             provider_mod.register(ctx)
         self.assertIsNotNone(ctx.provider)
+
+    def test_skill_path_points_to_skill_md_file(self):
+        """Hermes ждёт Path с .exists() и описанием «путь до SKILL.md», а не строку папки."""
+        ctx = _Ctx()
+        provider_mod.register(ctx)
+        self.assertEqual(ctx.skill_name, "kadre")
+        self.assertTrue(hasattr(ctx.skill_path, "exists"), "нужен Path, а не str")
+        self.assertTrue(str(ctx.skill_path).endswith("SKILL.md"), str(ctx.skill_path))
+        self.assertTrue(Path(str(ctx.skill_path)).is_file())
 
 
 class CostReportingTests(unittest.TestCase):
