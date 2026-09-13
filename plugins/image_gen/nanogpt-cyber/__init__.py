@@ -3,14 +3,35 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 try:
     from .nanogpt import generate as nanogpt_generate
+    from .once import (
+        AGENT_INSTRUCTION,
+        Shot,
+        fingerprint,
+        guarded,
+        lookup,
+        normalize_core,
+        remember,
+        resolve_request,
+    )
     from .plan import make_plan
 except ImportError:
     from nanogpt import generate as nanogpt_generate
+    from once import (
+        AGENT_INSTRUCTION,
+        Shot,
+        fingerprint,
+        guarded,
+        lookup,
+        normalize_core,
+        remember,
+        resolve_request,
+    )
     from plan import make_plan
 
 try:
@@ -36,7 +57,19 @@ except ImportError:  # CLI / тесты без Hermes
         return {"success": False, **kwargs}
 
     def success_response(**kwargs):  # type: ignore[no-redef]
-        return {"success": True, **kwargs}
+        payload = {
+            "success": True,
+            "image": kwargs.get("image"),
+            "model": kwargs.get("model"),
+            "prompt": kwargs.get("prompt"),
+            "aspect_ratio": kwargs.get("aspect_ratio"),
+            "modality": kwargs.get("modality", "text"),
+            "provider": kwargs.get("provider"),
+        }
+        extra = kwargs.get("extra") or {}
+        for key, value in extra.items():
+            payload.setdefault(key, value)
+        return payload
 
     def save_b64_image(b64_data, *, prefix="image", extension="jpg"):  # type: ignore[no-redef]
         out = Path(os.environ.get("KADRE_OUT", ".kadre-out"))
@@ -46,6 +79,15 @@ except ImportError:  # CLI / тесты без Hermes
 
         path.write_bytes(base64.b64decode(b64_data))
         return path
+
+
+KADRE_SYSTEM = """Kadre / image_generate — одноразовый кадр.
+- Один вызов image_generate на один запрос человека.
+- Не делай варианты, не вызывай инструмент пачкой, не гоняй vision-QA.
+- success=true значит кадр финальный. Покажи путь и модель. Стоп.
+- Повтор — только если человек явно написал «ещё» или «перегенерируй».
+- Модель XL/Pony и промпт выбирает nanogpt-cyber сам. Не подменяй «на всякий случай».
+"""
 
 
 class NanoGptCyberProvider(ImageGenProvider):
@@ -92,7 +134,7 @@ class NanoGptCyberProvider(ImageGenProvider):
         return {
             "name": "NanoGPT CyberRealistic",
             "badge": "paid",
-            "tag": "XL + Pony v9 через NanoGPT, авто-маршрут по запросу",
+            "tag": "XL + Pony v9 через NanoGPT, один кадр на запрос",
             "env_vars": [
                 {
                     "key": "NANOGPT_API_KEY",
@@ -114,13 +156,34 @@ class NanoGptCyberProvider(ImageGenProvider):
         reference_image_urls: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        text = (prompt or "").strip()
+        return guarded(
+            self._generate_locked,
+            prompt=prompt,
+            aspect_ratio=aspect_ratio,
+            image_url=image_url,
+            reference_image_urls=reference_image_urls,
+            **kwargs,
+        )
+
+    def _generate_locked(
+        self,
+        prompt: str,
+        aspect_ratio: str = DEFAULT_ASPECT_RATIO,
+        *,
+        image_url: Optional[str] = None,
+        reference_image_urls: Optional[List[str]] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        del kwargs  # n / upscale / лишние поля Hermes — игнор, всегда один кадр
+        raw = (prompt or "").strip()
         aspect = resolve_aspect_ratio(aspect_ratio)
         if aspect not in ("landscape", "square", "portrait"):
             aspect = "portrait"
-        low = text.lower()
+        low = raw.lower()
         if aspect == "landscape" and not any(w in low for w in ("landscape", "горизонт", "wide", "16:9")):
             aspect = "portrait"
+
+        text = resolve_request(raw)
         if not text:
             return error_response(
                 error="пустой запрос",
@@ -135,14 +198,24 @@ class NanoGptCyberProvider(ImageGenProvider):
         refs.extend(normalize_reference_images(reference_image_urls) or [])
         ref = refs[0] if refs else None
 
-        override = kwargs.get("model")
-        if override in (None, "", "auto"):
-            override = None
+        cached = lookup(raw, ref=ref, aspect=aspect, model="auto")
+        if cached:
+            return self._finish(
+                image=cached.path,
+                model=cached.model,
+                user_prompt=raw,
+                aspect=aspect,
+                plan_reason=cached.reason,
+                notes=list(cached.notes or []) + ["повторный вызов агента — тот же кадр, NanoGPT не дергали"],
+                used_i2i=False,
+                strength=None,
+                cached=True,
+            )
 
         plan = make_plan(
             text,
             has_reference=bool(ref),
-            model_override=override,
+            model_override=None,
             aspect_ratio=aspect,
         )
         try:
@@ -162,28 +235,72 @@ class NanoGptCyberProvider(ImageGenProvider):
                 error_type=type(exc).__name__,
                 provider=self.name,
                 model=plan.model,
-                prompt=plan.prompt,
+                prompt=raw,
                 aspect_ratio=aspect,
             )
 
         path = save_b64_image(result["b64"], prefix="nanogpt-cyber", extension="jpg")
-        extra = {
-            "reason": plan.reason,
-            "warnings": plan.warnings,
-            "rewritten_prompt": plan.prompt,
-            "negative_prompt": plan.negative_prompt,
-            "cost": result.get("cost"),
-            "balance": result.get("balance"),
-            "used_i2i": plan.use_i2i,
-            "strength": plan.strength,
-        }
-        return success_response(
+        core = normalize_core(text)
+        remember(
+            Shot(
+                path=str(path),
+                core=core,
+                fingerprint=fingerprint(core, ref, aspect, "auto"),
+                request=text,
+                model=plan.model,
+                ts=time.time(),
+                reason=plan.reason,
+                notes=list(plan.warnings),
+            )
+        )
+        return self._finish(
             image=str(path),
             model=plan.model,
-            prompt=plan.prompt,
+            user_prompt=raw,
+            aspect=aspect,
+            plan_reason=plan.reason,
+            notes=list(plan.warnings),
+            used_i2i=plan.use_i2i,
+            strength=plan.strength,
+            cached=False,
+            cost=result.get("cost"),
+            balance=result.get("balance"),
+        )
+
+    def _finish(
+        self,
+        *,
+        image: str,
+        model: str,
+        user_prompt: str,
+        aspect: str,
+        plan_reason: str,
+        notes: list[str],
+        used_i2i: bool,
+        strength: float | None,
+        cached: bool,
+        cost: Any = None,
+        balance: Any = None,
+    ) -> Dict[str, Any]:
+        extra = {
+            "final": True,
+            "regenerate": False,
+            "cached": cached,
+            "agent_instruction": AGENT_INSTRUCTION,
+            "reason": plan_reason,
+            "notes": notes,
+            "cost": 0 if cached else cost,
+            "balance": balance,
+            "used_i2i": used_i2i,
+            "strength": strength,
+        }
+        return success_response(
+            image=image,
+            model=model,
+            prompt=user_prompt,
             aspect_ratio=aspect,
             provider=self.name,
-            modality="image" if plan.use_i2i else "text",
+            modality="image" if used_i2i else "text",
             extra=extra,
         )
 
@@ -192,3 +309,20 @@ def register(ctx) -> None:
     if not _HERMES:
         return
     ctx.register_image_gen_provider(NanoGptCyberProvider())
+    try:
+        ctx.register_system_prompt_section(
+            "kadre.one-shot",
+            KADRE_SYSTEM,
+            position="after_memory",
+            max_chars=900,
+        )
+    except Exception:
+        pass
+    skill = Path(__file__).resolve().parent / "skill"
+    if not skill.is_dir():
+        skill = Path(__file__).resolve().parents[3] / "skills" / "kadre"
+    if skill.is_dir():
+        try:
+            ctx.register_skill("kadre", str(skill))
+        except Exception:
+            pass
